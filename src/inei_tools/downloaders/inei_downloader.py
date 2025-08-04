@@ -71,6 +71,99 @@ class DBManager:
 # TODO: Verificar lo de "se descargaron 0 archivos" y raise ValueError
 # TODO: Diagnosticar Permission Error
 class Downloader:
+    """
+    Clase principal para descargar módulos de encuestas del INEI (ENAHO, ENAPRES, ENDES),
+    con opciones para descomprimir, seleccionar formato de archivo y realizar descargas en paralelo.
+
+    Parameters
+    ----------
+    modulos : list[str | Encuesta]
+        Lista de módulos a descargar. Pueden especificarse como strings (ej. "01") o como
+        miembros de las clases `Enaho`, `EnahoPanel`, `Enapres` o `Endes`.
+    anios : list[str]
+        Lista de años a descargar. Ejemplo: ["2022", "2023"] o range(2020, 2024).
+    output_dir : str, optional
+        Carpeta donde se guardarán los archivos descargados. Por defecto: carpeta actual (`"."`).
+    overwrite : bool, optional
+        Determina si se deben sobrescribir los archivos existentes.
+        - Si **True**, descarga y reemplaza cualquier archivo previamente guardado.
+        - Si **False**, omite la descarga de archivos ya presentes y simplemente retorna sus rutas.
+        Por defecto: False.
+    descomprimir : bool, optional
+        Si True, descomprime los archivos ZIP descargados y los guarda en una carpeta. Por defecto: False.
+    parallel_downloads : bool, optional
+        Si True, activa la descarga en paralelo utilizando múltiples hilos. Por defecto: False.
+    file_type : {"csv", "dta", "stata", "dbf"}, optional
+        Formato de archivo a descargar. Usa "stata" como alias de "dta". Por defecto: "csv".
+    data_only : bool, optional
+        Si True, conserva únicamente el archivo de datos con extensión especificada (ignora otros).
+        Solo tiene efecto cuando `descomprimir=True`. Por defecto: False.
+
+    Attributes
+    ---------
+    archivos_a_descargar : list[ArchivoINEI]
+        Lista de objetos que representan cada módulo/año a descargar.
+    downloaded_files : list[Path]
+        Lista de rutas a los archivos o carpetas descargados exitosamente.
+    encuesta_name : str
+        Nombre de la encuesta inferido a partir del primer módulo (ej. "Enaho").
+    exceptions : list[Exception]
+        Lista de excepciones capturadas durante el proceso de descarga.
+
+    Retorna
+    -------
+    list[Path]  
+        Lista de rutas a los archivos o carpetas descargadas exitosamente.  
+        El contenido depende de los parámetros utilizados:
+
+        - Si `descomprimir=False`: retorna archivos ZIP descargados.
+        - Si `descomprimir=True`: retorna carpetas extraídas (una por módulo/año).
+        - Si `data_only=True`: retorna únicamente archivos de datos (.csv, .dta, etc.) sin subcarpetas.
+
+    Ejemplos
+    --------
+    Descargar módulos CSV ya descomprimidos y con solo los archivos de datos:
+
+    >>> downloader = Downloader(
+    ...     modulos=Enaho.M85_GOBERNABILIDAD_DEMOCRACIA_TRANSPARENCIA,
+    ...     anios=[2022, 2023],
+    ...     output_dir="data/",
+    ...     descomprimir=True,
+    ...     overwrite=True,
+    ...     file_type="csv",
+    ...     data_only=True,
+    ...     parallel_downloads=True,
+    ... )
+    >>> archivos = downloader.download_all()
+
+    Descargar archivos ZIP en formato Stata sin descomprimir:
+
+    >>> downloader = Downloader(
+    ...     modulos=Enaho.M01_CARACTERISTICAS_VIVIENDA_HOGAR,
+    ...     anios=range(2020, 2024),
+    ...     output_dir="zips/",
+    ...     descomprimir=False,
+    ...     overwrite=True,
+    ...     file_type="stata",
+    ...     data_only=False,
+    ...     parallel_downloads=False,
+    ... )
+    >>> archivos = downloader.download_all()
+
+    Notas
+    -----
+    Esta clase es una versión extendida del proyecto original `enahodata`,
+    desarrollado por Maykol Medrano.
+    Repositorio original: https://github.com/MaykolMedrano/enahodata_py
+    PyPI: https://pypi.org/project/enahodata/
+
+    Esta implementación permite descarga paralela, manejo de errores, verificación de formatos
+    disponibles por año y descompresión con aplanamiento automático de carpetas.
+
+    Para obtener los módulos disponibles, consulta los enumerados:
+    `inei.Enaho`, `inei.EnahoPanel`, `inei.Enapres` o `inei.Endes`.
+    """
+
     BASE_URL = "https://proyectos.inei.gob.pe/iinei/srienaho/descarga/{file_type}/{encuesta_code}-Modulo{modulo}.zip"
     FILE_NAME_BASE = "{encuesta}_{modulo}_{anio}.{ext}"
 
@@ -79,76 +172,12 @@ class Downloader:
         modulos: list[str | Encuesta],
         anios: list[str],
         output_dir: str = ".",
-        overwrite: bool = True,
+        overwrite: bool = False,
         descomprimir: bool = False,
         parallel_downloads: bool = False,
         file_type: Literal["csv", "stata", "dta", "dbf"] = "csv",
         data_only: bool = False,
     ):
-        """
-        Función principal para descargar módulos de las encuestas del INEI
-        (corte transversal o panel, según 'panel=True').
-
-        Parameters
-        ----------
-        modulos : list[str]
-            Lista de módulos a descargar. Ejemplo: ["01", "02"] (ENAHO regular)
-            o ["1474", "1475"] (panel). ¡No puede estar vacía!
-        anios : list[str]
-            Lista de años. Ejemplo: ["2023", "2022"].
-        panel : bool, optional
-            Si True, usa datos de panel (YEAR_MAP_PANEL). Si False, corte transversal (YEAR_MAP).
-            Por defecto: False.
-        descomprimir : bool, optional
-            Si True, descomprime el ZIP y lo elimina después.
-            Por defecto: True.
-        only_dta : bool, optional
-            Si True, solo extrae/copia archivos .dta (ignora otros formatos).
-            Por defecto: False.
-        load_dta : bool, optional
-            Si True, carga los archivos .dta en memoria (DataFrames de pandas) y retorna un diccionario.
-            Por defecto: False.
-        **kwargs
-            Parámetros adicionales:
-            - output_dir : str, optional
-                Directorio personalizado para guardar archivos.
-            - overwrite : bool, optional
-                Sobrescribir archivos existentes. Por defecto: False.
-            - parallel_downloads : bool, optional
-                Descargas en paralelo. Por defecto: False.
-            - max_workers : int, optional
-                Número de hilos para descargas paralelas. Por defecto: 5.
-
-        Retorna
-        -------
-        dict | None
-            - Si `load_dta=True`: Retorna un diccionario anidado con la estructura:
-                ```python
-                {
-                    ("2023", "01"): {
-                        "enaho_2023_01.dta": pd.DataFrame,
-                        ...
-                    },
-                    ...
-                }
-                ```
-            - Si `load_dta=False`: Retorna None.
-
-        Ejemplos
-        --------
-        >>> datos = descargar_modulos(
-        ...     modulos=["01", "02"],
-        ...     anios=["2023"],
-        ...     load_dta=True
-        ... )
-        >>> datos[("2023", "01")].keys()  # Si load_dta = True, retorna diccionario de diccionarios
-
-        Notas
-        -----
-        Esta función es un fork del proyecto `enahodata`, desarrollado originalmente por Maykol Medrano.
-        Repositorio original: https://github.com/MaykolMedrano/enahodata_py
-        Distribución PyPI: https://pypi.org/project/enahodata/
-        """
         self.modulos = modulos
         self.anios = anios
         self.descomprimir = descomprimir
@@ -243,26 +272,30 @@ class Downloader:
         # Crear la carpeta de salida
         self.output_dir.mkdir(exist_ok=True)
 
-        años_sin_formato = self.db.execute_query(DBManager.verify_download_format(self.anios, format=self.file_type))
+        años_sin_formato = self.db.execute_query(
+            DBManager.verify_download_format(self.anios, format=self.file_type)
+        )
         if años_sin_formato:
             años = [str(a[0]) for a in años_sin_formato]
             años_str = ", ".join(años)
-            raise ValueError(f"El formato '{self.file_type}' no está disponible para la {self.encuesta_name} para los años {años_str}.")
-            
+            raise ValueError(
+                f"El formato '{self.file_type}' no está disponible para la {self.encuesta_name} para los años {años_str}."
+            )
+
         for anio in self.anios:
             try:
-                codigo_encuesta = str(self.db.execute_query(
-                    DBManager.get_encuesta_code(anio)
-                )[0][0])
+                codigo_encuesta = str(
+                    self.db.execute_query(DBManager.get_encuesta_code(anio))[0][0]
+                )
             except KeyError:
                 raise KeyError(
                     f"No se encontro el año {anio} para la {self.encuesta_name}."
                 )
             for modulo in self.modulos:
                 ic(modulo)
-                codigo_modulo = str(self.db.execute_query(
-                    DBManager.get_module_code(anio, modulo)
-                )[0][0])
+                codigo_modulo = str(
+                    self.db.execute_query(DBManager.get_module_code(anio, modulo))[0][0]
+                )
                 file_name = self.FILE_NAME_BASE.format(
                     encuesta=self.encuesta_name.lower(),
                     modulo=codigo_modulo,
