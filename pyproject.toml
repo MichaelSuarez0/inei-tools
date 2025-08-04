@@ -1,0 +1,28 @@
+[project]
+name = "inei_tools"
+version = "0.0.1"
+description = "Librería de Python para descargar, preprocesar y analizar"
+readme = "README.md"
+requires-python = ">=3.8"
+authors = [
+  { name = "Michael Suárez", email = "michael-salvador@hotmail.com" }
+]
+keywords = ["python", "enaho"]
+license = "MIT" 
+dependencies = [
+  "pandas",
+  "requests"
+]
+
+[project.urls]
+"Homepage" = "https://github.com/MichaelSuarez0/inei-tools"
+
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
