@@ -1,1 +1,0 @@
-"p2_1$01" # La corrupción es el principal problema del país (dummy)
