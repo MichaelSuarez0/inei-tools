@@ -36,6 +36,8 @@ class ArchivoINEI:
 # TODO: Que al descomprimir un zip con todos los archivos, de todas formas se cambie el nombre del csv
 # TODO: Verificar lo de "se descargaron 0 archivos" y raise ValueError
 # TODO: Diagnosticar Permission Error
+# TODO: overwrite=True no funciona si es un zip y si se coloca data_only, tal vez considerar poner data_only=False si no se descomprime o al revés
+# TODO: Considerar descargar solo pdfs
 class Downloader:
     """
     Clase principal para descargar módulos de encuestas del INEI (ENAHO, ENAPRES, ENDES),
@@ -154,7 +156,7 @@ class Downloader:
         self.file_type = file_type
         self.data_only = data_only
         self.encuesta = None
-        
+
         if file_type in ("dta", "stata"):
             self.ext_type = "dta"
             self.file_type = "stata"
@@ -185,23 +187,25 @@ class Downloader:
             # Validar rango
             for anio in self.anios:
                 if not anio.isdigit() or not (2000 <= int(anio) <= 2025):
-                    raise ValueError(f"Año fuera de rango permitido (2000-2025): {anio}")
+                    raise ValueError(
+                        f"Año fuera de rango permitido (2000-2025): {anio}"
+                    )
 
         # Módulos
+        # Conversiones básicas
         if isinstance(self.modulos, Iterable):
             self.modulos = list(self.modulos)
-
         elif not isinstance(self.modulos, list):
             self.modulos = [self.modulos]
 
-        if all(isinstance(modulo, Enum) for modulo in self.modulos):
-            #self.modulos = [modulo.value for modulo in self.modulos]
-            pass
-
-        elif all(isinstance(modulo, int) for modulo in self.modulos):
+        if all(isinstance(modulo, int) for modulo in self.modulos):
             self.modulos = [str(modulo) for modulo in self.modulos]
 
-        if all(isinstance(modulo, str) for modulo in self.modulos):
+        # Assertions
+        if all(isinstance(modulo, Enum) for modulo in self.modulos):
+            self.modulos = [modulo.value for modulo in self.modulos]
+
+        elif all(isinstance(modulo, str) for modulo in self.modulos):
             self.modulos = [
                 modulo.zfill(2) if len(modulo) == 1 else modulo
                 for modulo in self.modulos
@@ -210,27 +214,32 @@ class Downloader:
             if not all(2 <= len(modulo) <= 4 for modulo in self.modulos):
                 raise ValueError("Los modulos deben tener un longitud entre 2 y 4")
 
-
         else:
             raise TypeError(
                 "Modulos debe ser una lista de Encuesta, str o int; no combinar tipos"
             )
 
-    def _get_encuesta_name_and_code(self, codigo_modulo: str, año: str):
-        if isinstance(codigo_modulo, Enum):
-            encuesta_name = codigo_modulo[0].__class__.__name__.lower()
-            encuesta_code = Queries.get_encuesta_code(encuesta_name)
-        elif isinstance(codigo_modulo, str):
+    def _get_encuesta_name_and_code(self, codigo_o_modulo: str, año: str):
+        # if isinstance(codigo_modulo, Enum):
+        #     encuesta_name = codigo_modulo.__class__.__name__.lower()
+        #     encuesta_code = self.db.execute_query(
+        #         Queries.get_encuesta_code(encuesta_name)
+        #     )
+        #     encuesta_code = encuesta_code[0][0]
+        # elif isinstance(codigo_modulo, str):
+        values = self.db.execute_query(
+            Queries.get_encuesta_metadata(año, codigo_o_modulo)
+        )
+        if not values:
             values = self.db.execute_query(
-                Queries.get_encuesta_name_and_code(año, codigo_modulo)
+                Queries.get_encuesta_metadata_from_module(año, codigo_o_modulo)
             )
             if not values:
                 raise ValueError(
-                    f"No se encontraron resultados para el módulo {codigo_modulo} del año {str(año)}."
+                    f"No se encontraron resultados para el módulo {codigo_o_modulo} del año {str(año)}."
                 )
-            else:
-                encuesta_name, encuesta_code = values[0]
-            
+
+        encuesta_name, encuesta_code = values[0]
         return encuesta_name, encuesta_code
 
     def _conect_to_db(self):
@@ -274,21 +283,23 @@ class Downloader:
         #     )
         # Obtener ArchivoINEI por cada combinación de año y módulo
         no_disponible = []
-        for modulo in self.modulos:
+        for codigo_o_modulo in self.modulos:
             # Obtener todas las variables necesarias
             if not self.anios:
-                anio = self.db.execute_query(Queries.get_año_from_module_code(modulo))
+                anio = self.db.execute_query(Queries.get_año_from_module_code(codigo_o_modulo))
                 self.anios.append(anio[0][0])
             for anio in self.anios:
                 encuesta_name, encuesta_code = self._get_encuesta_name_and_code(
-                    modulo, anio
+                    codigo_o_modulo, anio
                 )
-                if encuesta_name == "enapres" and len(modulo) == 4:
-                    codigo_modulo = modulo
+                if encuesta_name == "enapres" and len(codigo_o_modulo) == 4:
+                    codigo_modulo = codigo_o_modulo
                 else:
                     codigo_modulo = str(
-                        self.db.execute_query(Queries.get_module_code(anio, modulo))[0][0]
-                    ) 
+                        self.db.execute_query(Queries.get_module_code(anio, codigo_o_modulo))[0][
+                            0
+                        ]
+                    )
                 # Verificar que existan los formatos antes de descargar
                 # Nota: el modulo puede ser único o repetirse con el año, y siempre se utiliza para descargar
                 # En cambio, el capítulo siempre se repite con el año y solo sirve para el usuario; no sirve para descargar
@@ -306,6 +317,7 @@ class Downloader:
                             "año": año_error,
                         }
                     )
+                    ic(no_disponible)
 
                 file_name = self.FILE_NAME_BASE.format(
                     encuesta=encuesta_name.lower(),
@@ -328,7 +340,7 @@ class Downloader:
                     )
                 )
         if no_disponible:
-            raise FormatoNoDisponibleError(errors)
+            raise FormatoNoDisponibleError(no_disponible)
         self._assert_overwrite()
         ic(self.archivos_a_descargar)
 
