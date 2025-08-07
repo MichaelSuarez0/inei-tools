@@ -12,7 +12,8 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from ..encuestas import Encuesta, Enaho, EnahoPanel, Enapres, Endes
 from requests.exceptions import Timeout, ConnectionError
-from .exceptions import NoFilesExtractedError
+from .exceptions import NoFilesExtractedError, FormatoNoDisponibleError
+from .db_manager import DBManager, Queries
 
 from icecream import ic
 
@@ -30,41 +31,6 @@ class ArchivoINEI:
     encuesta_name: str
     file_path: Path
     status: Literal["exists", "download"] = "download"
-
-
-class DBManager:
-    RESOURCES_PATH = Path(__file__).parent.parent / "resources"
-
-    def __init__(self):
-        self.cursor: sqlite3.Cursor = None
-        self.conn: sqlite3.Connection = None
-
-    def connect(self, db_name: str):
-        database = self.RESOURCES_PATH / f"{db_name}.sqlite"
-        self.conn = sqlite3.connect(database)
-        self.cursor = self.conn.cursor()
-
-    @staticmethod
-    def get_encuesta_code(año: str):
-        return f"SELECT codigo_encuesta FROM modulos WHERE año == {str(año)} LIMIT 1"
-
-    @staticmethod
-    def get_module_code(año: str, modulo: str):
-        return f"SELECT codigo_modulo FROM modulos WHERE modulo = '{str(modulo)}' AND año = {str(año)}"
-
-    @staticmethod
-    def verify_download_format(años: list[str], format: str):
-        años_str = ", ".join(años)
-        return f"""
-            SELECT DISTINCT año
-            FROM modulos
-            WHERE {format} = 0 AND año IN ({años_str})
-        """
-
-    def execute_query(self, query: str):
-        self.cursor.execute(query)
-        resultado = self.cursor.fetchall()
-        return resultado
 
 
 # TODO: Que al descomprimir un zip con todos los archivos, de todas formas se cambie el nombre del csv
@@ -112,8 +78,8 @@ class Downloader:
 
     Retorna
     -------
-    list[Path]  
-        Lista de rutas a los archivos o carpetas descargadas exitosamente.  
+    list[Path]
+        Lista de rutas a los archivos o carpetas descargadas exitosamente.
         El contenido depende de los parámetros utilizados:
 
         - Si `descomprimir=False`: retorna archivos ZIP descargados.
@@ -166,27 +132,37 @@ class Downloader:
 
     BASE_URL = "https://proyectos.inei.gob.pe/iinei/srienaho/descarga/{file_type}/{encuesta_code}-Modulo{modulo}.zip"
     FILE_NAME_BASE = "{encuesta}_{modulo}_{anio}.{ext}"
+    ENCUESTAS = ["enaho", "enaho_panel", "enapres", "endes"]
 
     def __init__(
         self,
         modulos: list[str | Encuesta],
-        anios: list[str],
+        anios: list[str] | None = None,
         output_dir: str = ".",
         overwrite: bool = False,
         descomprimir: bool = False,
         parallel_downloads: bool = False,
-        file_type: Literal["csv", "stata", "dta", "dbf"] = "csv",
+        file_type: Literal["csv", "stata", "dta", "dbf", "spss", "stata"] = "csv",
         data_only: bool = False,
     ):
         self.modulos = modulos
-        self.anios = anios
+        self.anios = anios if anios is not None else []
         self.descomprimir = descomprimir
         self.output_dir = Path(output_dir)
         self.overwrite = overwrite
         self.parallel_downloads = parallel_downloads
-        self.file_type = "stata" if file_type == "dta" else file_type
+        self.file_type = file_type
         self.data_only = data_only
         self.encuesta = None
+        
+        if file_type in ("dta", "stata"):
+            self.ext_type = "dta"
+            self.file_type = "stata"
+        elif file_type in ("spss", "sav"):
+            self.file_type = "spss"
+            self.ext_type = "sav"
+        else:
+            self.ext_type = file_type
 
         self._assert_types()
         self.exceptions = []
@@ -196,25 +172,33 @@ class Downloader:
 
     def _assert_types(self) -> None:
         # Años
-        if isinstance(self.anios, Iterable):
-            self.anios = list(self.anios)
-        elif not isinstance(self.anios, list):
-            self.anios = [self.anios]
-        else:
-            raise TypeError("`anios` debe ser un int, str o un iterable")
+        if self.anios:
+            if isinstance(self.anios, Iterable):
+                self.anios = list(self.anios)
+            elif not isinstance(self.anios, list):
+                self.anios = [self.anios]
+            else:
+                raise TypeError("`anios` debe ser un int, str o un iterable")
 
-        self.anios = [str(anio) for anio in self.anios]
+            self.anios = [str(anio) for anio in self.anios]
 
-        # Validar rango
-        for anio in self.anios:
-            if not anio.isdigit() or not (2000 <= int(anio) <= 2025):
-                raise ValueError(f"Año fuera de rango permitido (2000-2025): {anio}")
+            # Validar rango
+            for anio in self.anios:
+                if not anio.isdigit() or not (2000 <= int(anio) <= 2025):
+                    raise ValueError(f"Año fuera de rango permitido (2000-2025): {anio}")
 
         # Módulos
-        if not isinstance(self.modulos, list):
+        if isinstance(self.modulos, Iterable):
+            self.modulos = list(self.modulos)
+
+        elif not isinstance(self.modulos, list):
             self.modulos = [self.modulos]
 
-        if all(isinstance(modulo, int) for modulo in self.modulos):
+        if all(isinstance(modulo, Enum) for modulo in self.modulos):
+            #self.modulos = [modulo.value for modulo in self.modulos]
+            pass
+
+        elif all(isinstance(modulo, int) for modulo in self.modulos):
             self.modulos = [str(modulo) for modulo in self.modulos]
 
         if all(isinstance(modulo, str) for modulo in self.modulos):
@@ -226,81 +210,108 @@ class Downloader:
             if not all(2 <= len(modulo) <= 4 for modulo in self.modulos):
                 raise ValueError("Los modulos deben tener un longitud entre 2 y 4")
 
-            # Convert to Encuesta
-            converted_modulos = []
-            for modulo in self.modulos:
-                found = False
-                for encuesta in [Enaho, EnahoPanel, Enapres, Endes]:
-                    try:
-                        enum = encuesta(modulo)
-                        converted_modulos.append(enum)
-                        found = True
-                        break
-                    except ValueError:
-                        continue
-                if not found:
-                    raise ValueError(
-                        f"Modulo '{modulo}' no se encontró en ninguna encuesta"
-                    )
-
-            self.modulos = converted_modulos
-
-        if all(isinstance(modulo, Enum) for modulo in self.modulos):
-            self._obtain_encuesta()
-            self.modulos = [modulo.value for modulo in self.modulos]
 
         else:
             raise TypeError(
                 "Modulos debe ser una lista de Encuesta, str o int; no combinar tipos"
             )
 
-    def _obtain_encuesta(self):
-        self.encuesta = self.modulos[0].__class__
-        self.encuesta_name = self.modulos[0].__class__.__name__.capitalize()
-        return self.encuesta
+    def _get_encuesta_name_and_code(self, codigo_modulo: str, año: str):
+        if isinstance(codigo_modulo, Enum):
+            encuesta_name = codigo_modulo[0].__class__.__name__.lower()
+            encuesta_code = Queries.get_encuesta_code(encuesta_name)
+        elif isinstance(codigo_modulo, str):
+            values = self.db.execute_query(
+                Queries.get_encuesta_name_and_code(año, codigo_modulo)
+            )
+            if not values:
+                raise ValueError(
+                    f"No se encontraron resultados para el módulo {codigo_modulo} del año {str(año)}."
+                )
+            else:
+                encuesta_name, encuesta_code = values[0]
+            
+        return encuesta_name, encuesta_code
 
     def _conect_to_db(self):
         self.db = DBManager()
-        self.db.connect(self.encuesta_name.lower())
+        self.db.connect("encuestas")
+
+    # def _convert_modulos_to_encuesta(self):
+    #     # Convert to Encuesta
+    #     converted_modulos = []
+    #     for modulo in self.modulos:
+    #         self._conect_to_db()
+    #         found = False
+    #         for encuesta in [Enaho, EnahoPanel, Enapres, Endes]:
+    #             try:
+    #                 enum = encuesta(modulo)
+    #                 converted_modulos.append(enum)
+    #                 found = True
+    #                 break
+    #             except ValueError:
+    #                 continue
+    #         if not found:
+    #             raise ValueError(
+    #                 f"Modulo '{modulo}' no se encontró en ninguna encuesta"
+    #             )
+
+    #     self.modulos = converted_modulos
 
     def download_all(self) -> list[Path]:
-        # Elegir diccionario según panel
-        logging.info(f"Descargando '{self.encuesta_name}'")
-
-        self._conect_to_db()
-
         # Crear la carpeta de salida
         self.output_dir.mkdir(exist_ok=True)
+        self._conect_to_db()
 
-        años_sin_formato = self.db.execute_query(
-            DBManager.verify_download_format(self.anios, format=self.file_type)
-        )
-        if años_sin_formato:
-            años = [str(a[0]) for a in años_sin_formato]
-            años_str = ", ".join(años)
-            raise ValueError(
-                f"El formato '{self.file_type}' no está disponible para la {self.encuesta_name} para los años {años_str}."
-            )
+        # años_sin_formato = self.db.execute_query(
+        #     Queries.verify_download_format(self.anios, format=self.file_type)
+        # )
+        # if años_sin_formato:
+        #     años = [str(a[0]) for a in años_sin_formato]
+        #     años_str = ", ".join(años)
+        #     raise ValueError(
+        #         f"El formato '{self.file_type}' no está disponible para la {self.encuesta_name} para los años {años_str}."
+        #     )
+        # Obtener ArchivoINEI por cada combinación de año y módulo
+        no_disponible = []
+        for modulo in self.modulos:
+            # Obtener todas las variables necesarias
+            if not self.anios:
+                anio = self.db.execute_query(Queries.get_año_from_module_code(modulo))
+                self.anios.append(anio[0][0])
+            for anio in self.anios:
+                encuesta_name, encuesta_code = self._get_encuesta_name_and_code(
+                    modulo, anio
+                )
+                if encuesta_name == "enapres" and len(modulo) == 4:
+                    codigo_modulo = modulo
+                else:
+                    codigo_modulo = str(
+                        self.db.execute_query(Queries.get_module_code(anio, modulo))[0][0]
+                    ) 
+                # Verificar que existan los formatos antes de descargar
+                # Nota: el modulo puede ser único o repetirse con el año, y siempre se utiliza para descargar
+                # En cambio, el capítulo siempre se repite con el año y solo sirve para el usuario; no sirve para descargar
+                errors = self.db.execute_query(
+                    Queries.verify_download_format(
+                        codigo_modulo=codigo_modulo, año=anio, format=self.file_type
+                    )
+                )
+                if errors:
+                    encuesta_error, año_error = errors[0]
+                    no_disponible.append(
+                        {
+                            "file_type": self.ext_type,
+                            "encuesta": encuesta_error,
+                            "año": año_error,
+                        }
+                    )
 
-        for anio in self.anios:
-            try:
-                codigo_encuesta = str(
-                    self.db.execute_query(DBManager.get_encuesta_code(anio))[0][0]
-                )
-            except KeyError:
-                raise KeyError(
-                    f"No se encontro el año {anio} para la {self.encuesta_name}."
-                )
-            for modulo in self.modulos:
-                ic(modulo)
-                codigo_modulo = str(
-                    self.db.execute_query(DBManager.get_module_code(anio, modulo))[0][0]
-                )
                 file_name = self.FILE_NAME_BASE.format(
-                    encuesta=self.encuesta_name.lower(),
+                    encuesta=encuesta_name.lower(),
                     modulo=codigo_modulo,
                     anio=anio,
-                    ext=self.file_type if self.data_only else "zip",
+                    ext=self.ext_type if self.data_only else "zip",
                 )
                 if not self.data_only and self.descomprimir:
                     target_path = self.output_dir / file_name.split(".")[0]
@@ -310,13 +321,14 @@ class Downloader:
                 self.archivos_a_descargar.append(
                     ArchivoINEI(
                         anio=anio,
-                        codigo_encuesta=codigo_encuesta,
+                        codigo_encuesta=encuesta_code,
                         codigo_modulo=codigo_modulo,
                         file_path=target_path,
-                        encuesta_name=self.encuesta_name,
+                        encuesta_name=encuesta_name,
                     )
                 )
-
+        if no_disponible:
+            raise FormatoNoDisponibleError(errors)
         self._assert_overwrite()
         ic(self.archivos_a_descargar)
 
@@ -375,7 +387,7 @@ class Downloader:
         completed = 0
 
         for archivo_inei in self.archivos_a_descargar:
-            if archivo_inei.status == "completed":
+            if archivo_inei.status == "exists":
                 continue
             self._download_zip(archivo_inei)
             completed += 1
@@ -405,7 +417,7 @@ class Downloader:
             modulo=archivo_inei.codigo_modulo,
         )
         zip_name = self.FILE_NAME_BASE.format(
-            encuesta=self.encuesta_name.lower(),
+            encuesta=archivo_inei.encuesta_name,
             modulo=archivo_inei.codigo_modulo,
             anio=archivo_inei.anio,
             ext="zip",
@@ -518,7 +530,7 @@ class Downloader:
                     file_path = archivo_inei.file_path / filename
 
                 if self.data_only:
-                    if not filename.lower().endswith(f"{self.file_type}"):
+                    if not filename.lower().endswith(f"{self.ext_type}"):
                         continue
                     file_path = file_path.with_name(archivo_inei.file_path.name)
 
