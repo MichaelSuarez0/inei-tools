@@ -22,25 +22,17 @@ class DBManager:
 
 class Queries:
     @staticmethod
-    def get_encuesta_code(encuesta):
-        return f"SELECT codigo_encuesta FROM modulos WHERE encuesta == '{str(encuesta)}' LIMIT 1"
+    def get_encuesta_metadata(año: str, codigo_modulo: str):
+        return f"SELECT encuesta, codigo_encuesta, modulo, codigo_modulo FROM modulos WHERE año == '{str(año)}' and codigo_modulo == '{str(codigo_modulo)}'"
     
+    @staticmethod
+    def get_encuesta_metadata_from_module(año: str, modulo: str):
+        return f"SELECT encuesta, codigo_encuesta, modulo, codigo_modulo FROM modulos WHERE año == '{str(año)}' and modulo == '{str(modulo)}'"
+
     @staticmethod
     def get_año_from_module_code(codigo_modulo: str):
         return f"SELECT año FROM modulos WHERE encuesta = 'enapres' and codigo_modulo == '{str(codigo_modulo)}'"
-
-    @staticmethod
-    def get_encuesta_metadata(año: str, codigo_modulo: str):
-        return f"SELECT encuesta, codigo_encuesta FROM modulos WHERE año == '{str(año)}' and codigo_modulo == '{str(codigo_modulo)}'"
     
-    @staticmethod
-    def get_encuesta_metadata_from_module(año: str, codigo_modulo: str):
-        return f"SELECT encuesta, codigo_encuesta FROM modulos WHERE año == '{str(año)}' and modulo == '{str(codigo_modulo)}'"
-
-    @staticmethod
-    def get_module_code(año: str, modulo: str):
-        return f"SELECT codigo_modulo FROM modulos WHERE modulo = '{str(modulo)}' AND año = '{str(año)}'"
-
     @staticmethod
     def verify_download_format(codigo_modulo: str, año: str, format: str):
         return f"""
