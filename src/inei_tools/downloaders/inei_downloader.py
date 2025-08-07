@@ -2,16 +2,15 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-import sqlite3
-from typing import Literal
+from typing import Literal, Optional
 import requests
 import zipfile
 import logging
-from tqdm import tqdm
 import shutil
+from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from ..encuestas import Encuesta, Enaho, EnahoPanel, Enapres, Endes
 from requests.exceptions import Timeout, ConnectionError
+from ..encuestas import Encuesta
 from .exceptions import NoFilesExtractedError, FormatoNoDisponibleError
 from .db_manager import DBManager, Queries
 
@@ -25,15 +24,17 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 @dataclass
 class ArchivoINEI:
-    anio: str
-    codigo_encuesta: str
-    codigo_modulo: str
+    año: str
     encuesta_name: str
-    file_path: Path
+    codigo_encuesta: str
+    modulo: str
+    codigo_modulo: str
+    file_path: Optional[Path] = None
     status: Literal["exists", "download"] = "download"
 
-
-# TODO: Que al descomprimir un zip con todos los archivos, de todas formas se cambie el nombre del csv
+# NOTE: el modulo puede ser único o repetirse con el año, y siempre se utiliza para descargar
+# NOTE: en cambio, el capítulo siempre se repite con el año y solo sirve para el usuario; no sirve para descargar
+# TODO: Al descomprimir un zip con todos los archivos, de todas formas se cambie el nombre del csv
 # TODO: Verificar lo de "se descargaron 0 archivos" y raise ValueError
 # TODO: Diagnosticar Permission Error
 # TODO: overwrite=True no funciona si es un zip y si se coloca data_only, tal vez considerar poner data_only=False si no se descomprime o al revés
@@ -49,7 +50,8 @@ class Downloader:
         Lista de módulos a descargar. Pueden especificarse como strings (ej. "01") o como
         miembros de las clases `Enaho`, `EnahoPanel`, `Enapres` o `Endes`.
     anios : list[str]
-        Lista de años a descargar. Ejemplo: ["2022", "2023"] o range(2020, 2024).
+        Lista de años a descargar. Ejemplo: ["2022", "2023"] o range(2020, 2024). En el caso de la Enapres,
+        se puede dejar en blanco si se especifica el código módulo (ya que es único para todos los años).
     output_dir : str, optional
         Carpeta donde se guardarán los archivos descargados. Por defecto: carpeta actual (`"."`).
     overwrite : bool, optional
@@ -138,8 +140,8 @@ class Downloader:
 
     def __init__(
         self,
-        modulos: list[str | Encuesta],
-        anios: list[str] | None = None,
+        modulos: int | str | Encuesta | list[str | Encuesta],
+        anios: int | str | list[str] | None = None,
         output_dir: str = ".",
         overwrite: bool = False,
         descomprimir: bool = False,
@@ -167,7 +169,6 @@ class Downloader:
             self.ext_type = file_type
 
         self._assert_types()
-        self.exceptions = []
         self.archivos_a_descargar: list[ArchivoINEI] = []
         self.downloaded_files: set[Path] = set()
         self.db: DBManager = None
@@ -219,28 +220,30 @@ class Downloader:
                 "Modulos debe ser una lista de Encuesta, str o int; no combinar tipos"
             )
 
-    def _get_encuesta_name_and_code(self, codigo_o_modulo: str, año: str):
-        # if isinstance(codigo_modulo, Enum):
-        #     encuesta_name = codigo_modulo.__class__.__name__.lower()
-        #     encuesta_code = self.db.execute_query(
-        #         Queries.get_encuesta_code(encuesta_name)
-        #     )
-        #     encuesta_code = encuesta_code[0][0]
-        # elif isinstance(codigo_modulo, str):
+    def _get_archivo_inei(self, codigo_o_modulo: str, año: str)-> ArchivoINEI:
         values = self.db.execute_query(
             Queries.get_encuesta_metadata(año, codigo_o_modulo)
         )
         if not values:
+            # Para el caso de que se ingresó el código_modulo de Enapres
             values = self.db.execute_query(
                 Queries.get_encuesta_metadata_from_module(año, codigo_o_modulo)
             )
+            ic(values)
             if not values:
                 raise ValueError(
                     f"No se encontraron resultados para el módulo {codigo_o_modulo} del año {str(año)}."
                 )
+        values = values[0]
+        archivo_inei = ArchivoINEI(
+            año=año,
+            encuesta_name=values[0],
+            codigo_encuesta=values[1],
+            modulo=values[2],
+            codigo_modulo=values[3]
+        )
 
-        encuesta_name, encuesta_code = values[0]
-        return encuesta_name, encuesta_code
+        return archivo_inei
 
     def _conect_to_db(self):
         self.db = DBManager()
@@ -272,16 +275,6 @@ class Downloader:
         self.output_dir.mkdir(exist_ok=True)
         self._conect_to_db()
 
-        # años_sin_formato = self.db.execute_query(
-        #     Queries.verify_download_format(self.anios, format=self.file_type)
-        # )
-        # if años_sin_formato:
-        #     años = [str(a[0]) for a in años_sin_formato]
-        #     años_str = ", ".join(años)
-        #     raise ValueError(
-        #         f"El formato '{self.file_type}' no está disponible para la {self.encuesta_name} para los años {años_str}."
-        #     )
-        # Obtener ArchivoINEI por cada combinación de año y módulo
         no_disponible = []
         for codigo_o_modulo in self.modulos:
             # Obtener todas las variables necesarias
@@ -289,23 +282,13 @@ class Downloader:
                 anio = self.db.execute_query(Queries.get_año_from_module_code(codigo_o_modulo))
                 self.anios.append(anio[0][0])
             for anio in self.anios:
-                encuesta_name, encuesta_code = self._get_encuesta_name_and_code(
+                archivo_inei = self._get_archivo_inei(
                     codigo_o_modulo, anio
                 )
-                if encuesta_name == "enapres" and len(codigo_o_modulo) == 4:
-                    codigo_modulo = codigo_o_modulo
-                else:
-                    codigo_modulo = str(
-                        self.db.execute_query(Queries.get_module_code(anio, codigo_o_modulo))[0][
-                            0
-                        ]
-                    )
                 # Verificar que existan los formatos antes de descargar
-                # Nota: el modulo puede ser único o repetirse con el año, y siempre se utiliza para descargar
-                # En cambio, el capítulo siempre se repite con el año y solo sirve para el usuario; no sirve para descargar
                 errors = self.db.execute_query(
                     Queries.verify_download_format(
-                        codigo_modulo=codigo_modulo, año=anio, format=self.file_type
+                        codigo_modulo=archivo_inei.codigo_modulo, año=anio, format=self.file_type
                     )
                 )
                 if errors:
@@ -320,27 +303,23 @@ class Downloader:
                     ic(no_disponible)
 
                 file_name = self.FILE_NAME_BASE.format(
-                    encuesta=encuesta_name.lower(),
-                    modulo=codigo_modulo,
+                    encuesta=archivo_inei.encuesta_name.lower(),
+                    modulo=archivo_inei.modulo,
                     anio=anio,
                     ext=self.ext_type if self.data_only else "zip",
                 )
+                ic(file_name)
                 if not self.data_only and self.descomprimir:
                     target_path = self.output_dir / file_name.split(".")[0]
                 else:
                     target_path = self.output_dir / file_name
 
-                self.archivos_a_descargar.append(
-                    ArchivoINEI(
-                        anio=anio,
-                        codigo_encuesta=encuesta_code,
-                        codigo_modulo=codigo_modulo,
-                        file_path=target_path,
-                        encuesta_name=encuesta_name,
-                    )
-                )
+                archivo_inei.file_path = target_path
+                self.archivos_a_descargar.append(archivo_inei)
+
         if no_disponible:
             raise FormatoNoDisponibleError(no_disponible)
+        
         self._assert_overwrite()
         ic(self.archivos_a_descargar)
 
@@ -430,8 +409,8 @@ class Downloader:
         )
         zip_name = self.FILE_NAME_BASE.format(
             encuesta=archivo_inei.encuesta_name,
-            modulo=archivo_inei.codigo_modulo,
-            anio=archivo_inei.anio,
+            modulo=archivo_inei.modulo,
+            anio=archivo_inei.año,
             ext="zip",
         )
         if archivo_inei.file_path.suffix:
@@ -473,7 +452,7 @@ class Downloader:
                     # h2 = soup.find("h2")
                     # summary = h2.get_text(strip=True) if h2 else "Sin detalle"
                     logging.error(
-                        f"Error al descargar {zip_path.name}. No se encontró el URL, verifica si '{self.file_type}' está disponible para el {archivo_inei.anio}."
+                        f"Error al descargar {zip_path.name}. No se encontró el URL, verifica si '{self.file_type}' está disponible para el {archivo_inei.año}."
                     )
                     logging.info(URL)
 
