@@ -3,7 +3,7 @@ from pathlib import Path
 import shutil
 import inei_tools as inei
 import pytest
-
+from inei_tools.downloaders.exceptions import FormatoNoDisponibleError
 
 OUTPUT_DIR = Path(__file__).parent / "downloads"
 
@@ -109,7 +109,8 @@ class TestEndesDownloader:
     #     self.assert_valid_paths(second_paths)
     
     def test_no_available_format(self):
-        # # NOTE: No existe CSV para antes del 2020
+        # NOTE: No existe CSV para antes del 2020
+        # NOTE: Cambian los módulos antes del 2020
         downloader = inei.Downloader(
             anios=list(range(2018, 2020)),
             modulos=[inei.Endes.M1638_PESO_TALLA_ANEMIA],
@@ -119,14 +120,14 @@ class TestEndesDownloader:
             parallel_downloads=True,
             file_type="csv"
         )
-        with pytest.raises(ValueError, match=".*no está disponible.*"):
+        with pytest.raises(FormatoNoDisponibleError, match=".*formato no disponible.*"):
             downloader.download_all()
 
 
 if __name__ == "__main__":
     import pytest
     #pytest.main([__file__, "-v"])
-    pytest.main([__file__, "-v", "-k", "test_download_zip_hardcoded"])
+    pytest.main([__file__, "-v", "-k", "test_no_available_format"])
 
 # def test_enapres_downloader():
 #     ed = inei.Downloader(
