@@ -10,7 +10,7 @@ import shutil
 from tqdm import tqdm
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from requests.exceptions import Timeout, ConnectionError
-from ..encuestas import Encuesta
+from ..encuestas import Encuesta, Endes
 from .exceptions import NoFilesExtractedError, FormatoNoDisponibleError
 from .db_manager import DBManager, Queries
 
@@ -204,7 +204,15 @@ class Downloader:
 
         # Assertions
         if all(isinstance(modulo, Enum) for modulo in self.modulos):
-            self.modulos = [modulo.value for modulo in self.modulos]
+            if self.modulos[0].__class__.__name__ == "Endes":
+                old_map = Endes.OLD_MODULE_MAP.value
+                modulos_converted = []
+                for año in self.anios:
+                    for modulo in self.modulos:
+                        modulos_converted.append(old_map[modulo.value] if int(año) < 2020 else modulo.value)
+                self.modulos = modulos_converted
+            else:    
+                self.modulos = [modulo.value for modulo in self.modulos]
 
         elif all(isinstance(modulo, str) for modulo in self.modulos):
             self.modulos = [
@@ -274,8 +282,19 @@ class Downloader:
         # Crear la carpeta de salida
         self.output_dir.mkdir(exist_ok=True)
         self._conect_to_db()
+        no_disponible = set()
 
-        no_disponible = []
+        # Resolver años si se escogen módulos de Enapres sin especificar años
+        if not self.anios:
+            self.anios = []
+            for codigo_o_modulo in self.modulos:
+                anio = self.db.execute_query(
+                    Queries.get_año_from_module_code(codigo_o_modulo)
+                )
+                if anio and anio[0][0] not in self.anios:
+                    self.anios.append(anio[0][0])
+        
+        # Bucle principal
         for codigo_o_modulo in self.modulos:
             # Obtener todas las variables necesarias
             if not self.anios:
@@ -293,14 +312,8 @@ class Downloader:
                 )
                 if errors:
                     encuesta_error, año_error = errors[0]
-                    no_disponible.append(
-                        {
-                            "file_type": self.ext_type,
-                            "encuesta": encuesta_error,
-                            "año": año_error,
-                        }
-                    )
-                    ic(no_disponible)
+                    no_disponible.add((self.ext_type, encuesta_error, año_error))
+                    continue
 
                 file_name = self.FILE_NAME_BASE.format(
                     encuesta=archivo_inei.encuesta_name.lower(),
@@ -308,7 +321,6 @@ class Downloader:
                     anio=anio,
                     ext=self.ext_type if self.data_only else "zip",
                 )
-                ic(file_name)
                 if not self.data_only and self.descomprimir:
                     target_path = self.output_dir / file_name.split(".")[0]
                 else:
@@ -321,7 +333,7 @@ class Downloader:
             raise FormatoNoDisponibleError(no_disponible)
         
         self._assert_overwrite()
-        ic(self.archivos_a_descargar)
+        #ic(self.archivos_a_descargar)
 
         if self.parallel_downloads:
             self._download_parallel()
@@ -467,7 +479,7 @@ class Downloader:
 
     def _print_success_message(self, completed):
         if not self.downloaded_files:
-            raise NoFilesExtractedError("Rayos")
+            raise NoFilesExtractedError("No se extrajeron archivos, revisar errores.")
         else:
             archivos_a_descargar = [
                 archivo
