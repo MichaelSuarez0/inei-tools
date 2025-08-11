@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 from typing import Literal, Optional
+import warnings
 import requests
 import zipfile
 import logging
@@ -167,6 +168,9 @@ class Downloader:
             self.ext_type = "sav"
         else:
             self.ext_type = file_type
+        if data_only == True and descomprimir == False:
+            warnings.warn("Opción 'data_only' activada: la descompresión se habilitó automáticamente para extraer los archivos de datos.")
+            self.descomprimir = True
 
         self._assert_types()
         self.archivos_a_descargar: list[ArchivoINEI] = []
@@ -519,14 +523,17 @@ class Downloader:
 
         # Extraer solo archivos deseados (flattened)
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            exist_index = 1
             for zinfo in zip_ref.infolist():
                 if zinfo.is_dir():
                     continue
 
+                # Borrar directorios dentro del zip
                 filename = Path(zinfo.filename).name
                 if not filename:
                     continue
 
+                # Determinar la ruta de destino donde se guardará el archivo extraído (dependiendo si es dir o archivo)
                 if archivo_inei.file_path.suffix:
                     file_path = archivo_inei.file_path.parent / filename
                 else:
@@ -535,7 +542,13 @@ class Downloader:
                 if self.data_only:
                     if not filename.lower().endswith(f"{self.ext_type}"):
                         continue
-                    file_path = file_path.with_name(archivo_inei.file_path.name)
+                    # Para no sobreescribir archivos (no sé por qué el INEI a veces divide una base de datos en varios archivos)
+                    path_to_assert = archivo_inei.file_path
+                    if path_to_assert.exists():
+                        file_path = file_path.with_name(f"{path_to_assert.stem}_{exist_index}_{path_to_assert.suffix}")
+                        exist_index += 1
+                    else:
+                        file_path = file_path.with_name(path_to_assert.name)
 
                     self.downloaded_files.add(file_path.resolve())
                 else:
