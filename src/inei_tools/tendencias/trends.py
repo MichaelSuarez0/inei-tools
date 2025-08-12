@@ -1,31 +1,17 @@
 from abc import ABC, abstractmethod
-import logging
 from typing import Literal, Optional
 from functools import reduce
 import pandas as pd
 from pathlib import Path
-
-import ubigeos_peru as ubg
+import logging
 from ..downloaders import Downloader
-from ..encuestas import Encuesta
-from .cleaners import EnapresCleaner
-
+from .t_enapres import TendenciasEnapres
 from .question_type import Dummy, Confidence
-from ._helper_functions import (
-    DATABASES_FOLDER,
-    PRODUCTS_FOLDER,
-    load_into_memory,
-    read,
-    transpose,
-)
-
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
-# TODO: Rust script for File Manager, pyautogui to farm supports
+# TODO: Rust script for File Manager
 # TODO: Evaluate data_source as list[pd.DataFrame] (drawback: no filenames to extract years)
-
-
 class TendenciasABC(ABC):
     def __init__(
         self,
@@ -44,6 +30,7 @@ class TendenciasABC(ABC):
         self.df_list_clean = []
 
     def _obtain_data_if_needed(self):
+
         if isinstance(self.data_source, Downloader):
             self.downloader = self.data_source
             self.downloader.overwrite = False
@@ -96,7 +83,7 @@ class TendenciasABC(ABC):
     
 
     def _merge_dfs(self, df_list: list[pd.DataFrame])-> pd.DataFrame:
-        for i, df in enumerate(df_list):
+        for i, df in enumerate(df_list, start=1):
             print(f"DF {i} columnas: {df.columns.tolist()}")
         merged_df = reduce(
             lambda left, right: pd.merge(left, right, on=self.variable_id),
@@ -119,73 +106,100 @@ class TendenciasABC(ABC):
             return Dummy(df, self.variable_id)
         elif self.question_type == "confidence":
             return Confidence(df, self.variable_id)
+    
+    def _export_to_excel(self, output_path: Path, merged_df: pd.DataFrame):
+        file_name = f"confianza_{self.variable_id}"
+        file_path = output_path / f"{file_name}.xlsx"
+        merged_df.to_excel(file_path, index=False)
+        logging.info(f"Se ha guardado el archivo en {file_name}")
 
     @abstractmethod
     def get_national_trends(self):
-        self._obtain_data_if_needed()
-        # self._remove_percepcion_hogar()
+        # self._obtain_data_if_needed()
+        # # self._remove_percepcion_hogar()
 
-        for filename, df in self.filename_df_dict.items():
-            logging.info(f"Reading {filename}")
-            question_type = self._get_question_type(df)
-            question_type.summarise()
-            logging.info(f"Successfully read {filename}")
-            self.df_list_clean.append(question_type.df)
+        # for filename, df in self.filename_df_dict.items():
+        #     logging.info(f"Reading {filename}")
+        #     question_type = self._get_question_type(df)
+        #     question_type.summarise()
+        #     logging.info(f"Successfully read {filename}")
+        #     self.df_list_clean.append(question_type.df)
 
-        file_name = f"confianza_{self.variable_id}"
-        file_path = PRODUCTS_FOLDER / f"{file_name}.xlsx"
-        final_df = reduce(
-            lambda left, right: pd.merge(left, right, on=self.variable_id),
-            self.df_list_clean,
-        )
-        final_df = transpose(final_df)
-        final_df.to_excel(file_path, index=False)
-        logging.info(f"Se ha guardado el archivo en {file_name}")
-        return final_df
-
-
-class TendenciasEnapres(TendenciasABC):
-    def __init__(
-        self,
-        data_source=None,
-        target_variable_id="",
-        question_type="dummy",
-        output_dir=".",
-    ):
-        super().__init__(data_source, target_variable_id, question_type, output_dir)
+        # file_name = f"confianza_{self.variable_id}"
+        # file_path = f"{file_name}.xlsx"
+        # final_df = reduce(
+        #     lambda left, right: pd.merge(left, right, on=self.variable_id),
+        #     self.df_list_clean,
+        # )
+        # final_df = transpose(final_df)
+        # final_df.to_excel(file_path, index=False)
+        # logging.info(f"Se ha guardado el archivo en {file_name}")
+        pass
     
-    def get_national_trends(self, output_path: Optional[Path] = None):
-        self._obtain_data_if_needed()
-        # self._remove_percepcion_hogar()
+    @abstractmethod
+    def get_department_trends(self):
+        # self._obtain_data_if_needed()
+        # # self._remove_percepcion_hogar()
 
-        for filename, df in self.filename_df_dict.items():
-            cleaner = EnapresCleaner(df, self.variable_id)
-            # cleaner.remove_nas().add_departamentos().filter_by_variable()
-            logging.info(f"Cleaning {filename}")
-            cleaner.remove_nas().add_departamentos().filter_by_variable().count_categories()
-            # return cleaner.df
-           
-            self.df_list_clean.append(cleaner.df)
-        
-        merged_df = self._merge_dfs(self.df_list_clean)
+        # for filename, df in self.filename_df_dict.items():
+        #     logging.info(f"Reading {filename}")
+        #     question_type = self._get_question_type(df)
+        #     question_type.summarise()
+        #     logging.info(f"Successfully read {filename}")
+        #     self.df_list_clean.append(question_type.df)
 
-        #final_df = transpose(final_df)
-        if output_path:
-            file_name = f"confianza_{self.variable_id}"
-            file_path = PRODUCTS_FOLDER / f"{file_name}.xlsx"
-            merged_df.to_excel(file_path, index=False)
-            logging.info(f"Se ha guardado el archivo en {file_name}")
-        logging.info(f"Se terminó")
-        return merged_df
-
+        # file_name = f"confianza_{self.variable_id}"
+        # file_path = PRODUCTS_FOLDER / f"{file_name}.xlsx"
+        # final_df = reduce(
+        #     lambda left, right: pd.merge(left, right, on=self.variable_id),
+        #     self.df_list_clean,
+        # )
+        # final_df = transpose(final_df)
+        # final_df.to_excel(file_path, index=False)
+        # logging.info(f"Se ha guardado el archivo en {file_name}")
+        pass
 
 class Tendencias:
+    """
+    Clase para la obtención de tendencias nacionales y departamentales
+    a partir de encuestas ENAPRES o ENAHO.
+
+    Esta clase instancia dinámicamente la clase de tendencias apropiada 
+    (`TendenciasEnapres` o `TendenciasEnaho`) en función del tipo de 
+    encuesta especificado, y expone métodos para obtener resultados 
+    agregados a nivel nacional y departamental.
+
+    Parameters
+    ----------
+    data_source : list[str | Path]
+        Rutas de las bases de datos utilizada para calcular las tendencias.
+    target_variable_id : str
+        ID de la variable objetivo sobre la cual se generan las tendencias.
+    question_type : str
+        Tipo de pregunta asociada a la variable objetivo.
+    output_dir : str | Path, optional
+        Directorio de salida para almacenar los resultados generados.
+    encuesta : {"enapres", "enaho"}, default="enapres"
+        Tipo de encuesta a procesar.
+
+    Attributes
+    ----------
+    tendencia_class : TendenciasABC or None
+        Instancia de la clase de tendencias correspondiente a la encuesta.
+
+    Methods
+    -------
+    get_national_trends(): pd.DataFrame
+        Retorna un DataFrame con tendencias a nivel nacional.
+    get_departament_trends(): pd.DataFrame
+        Retorna un DataFrame con tendencias a nivel departamental.
+    """
     def __init__(
         self,
-        data_source=None,
+        data_source=list[str | Path] | Downloader,
         target_variable_id="",
         question_type="dummy",
-        output_dir=".",
+        output_dir: Optional[str | Path] = None,
         encuesta: Literal["enapres", "enaho"] = "enapres",
     ):
         self.data_source= data_source
@@ -194,19 +208,39 @@ class Tendencias:
         self.output_dir= output_dir
         self.encuesta= encuesta
 
-    def get_national_trends(self)-> pd.DataFrame:
-        pd.options.mode.copy_on_write = True
+        self.tendencia_class: TendenciasABC = None
+
+    def _assert_encuesta(self):
         if self.encuesta == "enapres":
-            tendencia = TendenciasEnapres(
+            self.tendencia_class = TendenciasEnapres(
                 data_source=self.data_source,
                 target_variable_id=self.target_variable_id,
                 question_type=self.question_type,
                 output_dir=self.output_dir,
             )
-            df = tendencia.get_national_trends()
-            pd.options.mode.copy_on_write = False
-            return df
-        
+        elif self.encuesta == "enaho":
+            self.tendencia_class = TendenciasEnaho(
+                data_source=self.data_source,
+                target_variable_id=self.target_variable_id,
+                question_type=self.question_type,
+                output_dir=self.output_dir,
+            )
+    
+    def get_national_trends(self)-> pd.DataFrame:
+        self._assert_encuesta()
+        pd.options.mode.copy_on_write = True
+        df = self.tendencia_class.get_national_trends()
+        pd.options.mode.copy_on_write = False
+        logging.info(f"Se terminó")
+        return df
+      
+    def get_departament_trends(self)-> pd.DataFrame:
+        self._assert_encuesta()
+        pd.options.mode.copy_on_write = True
+        df = self.tendencia_class.get_department_trends()
+        pd.options.mode.copy_on_write = False
+        logging.info(f"Se terminó")
+        return df
         
 
     # def preprocess_dataframe(self):

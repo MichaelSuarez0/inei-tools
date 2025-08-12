@@ -3,7 +3,7 @@ from typing import Any, Tuple
 import pandas as pd
 import os
 from functools import reduce
-from ubigeos_peru import Ubigeo as ubg
+import ubigeos_peru as ubg
 from itertools import cycle
 
 # Globals
