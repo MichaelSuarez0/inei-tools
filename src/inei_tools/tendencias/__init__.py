@@ -1,4 +1,4 @@
 from .question_type import Dummy, Confidence
-from .trends import Tendencias
+from .tendencias import Tendencias
 
 #__all__ = ["enahodata", "Modulo", "ModuloPanel"]

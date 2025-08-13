@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Optional
-from .trends import TendenciasABC
+from ._trends_abc import TendenciasABC
 from ..cleaners import EnapresCleaner
 import logging
 
