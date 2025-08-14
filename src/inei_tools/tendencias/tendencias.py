@@ -5,6 +5,7 @@ import logging
 from ..downloaders import Downloader
 from .t_enapres import TendenciasEnapres
 from .t_enaho import TendenciasEnaho
+from .t_endes import TendenciasEndes
 
 if TYPE_CHECKING:
     from ._trends_abc import TendenciasABC
@@ -66,6 +67,13 @@ class Tendencias:
     def _assert_encuesta(self):
         if self.encuesta == "enapres":
             self.tendencia_class = TendenciasEnapres(
+                data_source=self.data_source,
+                target_variable_id=self.target_variable_id,
+                question_type=self.question_type,
+                output_dir=self.output_dir,
+            )
+        elif self.encuesta == "endes":
+            self.tendencia_class = TendenciasEndes(
                 data_source=self.data_source,
                 target_variable_id=self.target_variable_id,
                 question_type=self.question_type,
