@@ -33,13 +33,14 @@ class ArchivoINEI:
     file_path: Optional[Path] = None
     status: Literal["exists", "download"] = "download"
 
-# NOTE: el modulo puede ser único o repetirse con el año, y siempre se utiliza para descargar
+
+# NOTE: el codigo_modulo puede ser único o repetirse con el año, y siempre se utiliza para descargar
 # NOTE: en cambio, el capítulo siempre se repite con el año y solo sirve para el usuario; no sirve para descargar
-# TODO: Al descomprimir un zip con todos los archivos, de todas formas se cambie el nombre del csv
 # TODO: Verificar lo de "se descargaron 0 archivos" y raise ValueError
 # TODO: Diagnosticar Permission Error
 # TODO: overwrite=True no funciona si es un zip y si se coloca data_only, tal vez considerar poner data_only=False si no se descomprime o al revés
 # TODO: Considerar descargar solo pdfs
+# TODO: Quitar lo de "Iniciando descarga" si no se va a descargar nada
 class Downloader:
     """
     Clase principal para descargar módulos de encuestas del INEI (ENAHO, ENAPRES, ENDES),
@@ -136,7 +137,7 @@ class Downloader:
     """
 
     BASE_URL = "https://proyectos.inei.gob.pe/iinei/srienaho/descarga/{file_type}/{encuesta_code}-Modulo{modulo}.zip"
-    FILE_NAME_BASE = "{encuesta}_{modulo}_{anio}.{ext}"
+    FILE_NAME_BASE = "{encuesta}_{modulo}_{anio}{ext}"
     ENCUESTAS = ["enaho", "enaho_panel", "enapres", "endes"]
 
     def __init__(
@@ -161,15 +162,18 @@ class Downloader:
         self.encuesta = None
 
         if file_type in ("dta", "stata"):
-            self.ext_type = "dta"
+            self.ext = "dta"
             self.file_type = "stata"
         elif file_type in ("spss", "sav"):
             self.file_type = "spss"
-            self.ext_type = "sav"
+            self.ext = "sav"
         else:
-            self.ext_type = file_type
+            self.ext = file_type
+        self.ext = f".{self.ext}"
         if data_only == True and descomprimir == False:
-            warnings.warn("Opción 'data_only' activada: la descompresión se habilitó automáticamente para extraer los archivos de datos.")
+            warnings.warn(
+                "Opción 'data_only' activada: la descompresión se habilitó automáticamente para extraer los archivos de datos."
+            )
             self.descomprimir = True
 
         self._assert_types()
@@ -213,9 +217,11 @@ class Downloader:
                 modulos_converted = []
                 for año in self.anios:
                     for modulo in self.modulos:
-                        modulos_converted.append(old_map[modulo.value] if int(año) < 2020 else modulo.value)
+                        modulos_converted.append(
+                            old_map[modulo.value] if int(año) < 2020 else modulo.value
+                        )
                 self.modulos = modulos_converted
-            else:    
+            else:
                 self.modulos = [modulo.value for modulo in self.modulos]
 
         elif all(isinstance(modulo, str) for modulo in self.modulos):
@@ -232,7 +238,7 @@ class Downloader:
                 "Modulos debe ser una lista de Encuesta, str o int; no combinar tipos"
             )
 
-    def _get_archivo_inei(self, codigo_o_modulo: str, año: str)-> ArchivoINEI:
+    def _get_archivo_inei(self, codigo_o_modulo: str, año: str) -> ArchivoINEI:
         values = self.db.execute_query(
             Queries.get_encuesta_metadata(año, codigo_o_modulo)
         )
@@ -241,7 +247,6 @@ class Downloader:
             values = self.db.execute_query(
                 Queries.get_encuesta_metadata_from_module(año, codigo_o_modulo)
             )
-            ic(values)
             if not values:
                 raise ValueError(
                     f"No se encontraron resultados para el módulo {codigo_o_modulo} del año {str(año)}."
@@ -252,7 +257,7 @@ class Downloader:
             encuesta_name=values[0],
             codigo_encuesta=values[1],
             modulo=values[2],
-            codigo_modulo=values[3]
+            codigo_modulo=values[3],
         )
 
         return archivo_inei
@@ -297,33 +302,35 @@ class Downloader:
                 )
                 if anio and anio[0][0] not in self.anios:
                     self.anios.append(anio[0][0])
-        
+
         # Bucle principal
         for codigo_o_modulo in self.modulos:
             # Obtener todas las variables necesarias
             if not self.anios:
-                anio = self.db.execute_query(Queries.get_año_from_module_code(codigo_o_modulo))
+                anio = self.db.execute_query(
+                    Queries.get_año_from_module_code(codigo_o_modulo)
+                )
                 self.anios.append(anio[0][0])
             for anio in self.anios:
-                archivo_inei = self._get_archivo_inei(
-                    codigo_o_modulo, anio
-                )
+                archivo_inei = self._get_archivo_inei(codigo_o_modulo, anio)
                 # Verificar que existan los formatos antes de descargar
                 errors = self.db.execute_query(
                     Queries.verify_download_format(
-                        codigo_modulo=archivo_inei.codigo_modulo, año=anio, format=self.file_type
+                        codigo_modulo=archivo_inei.codigo_modulo,
+                        año=anio,
+                        format=self.file_type,
                     )
                 )
                 if errors:
                     encuesta_error, año_error = errors[0]
-                    no_disponible.add((self.ext_type, encuesta_error, año_error))
+                    no_disponible.add((self.ext, encuesta_error, año_error))
                     continue
 
                 file_name = self.FILE_NAME_BASE.format(
                     encuesta=archivo_inei.encuesta_name.lower(),
                     modulo=archivo_inei.modulo,
                     anio=anio,
-                    ext=self.ext_type if self.data_only else "zip",
+                    ext=self.ext if self.data_only else ".zip",
                 )
                 if not self.data_only and self.descomprimir:
                     target_path = self.output_dir / file_name.split(".")[0]
@@ -335,9 +342,9 @@ class Downloader:
 
         if no_disponible:
             raise FormatoNoDisponibleError(no_disponible)
-        
+
         self._assert_overwrite()
-        #ic(self.archivos_a_descargar)
+        # ic(self.archivos_a_descargar)
 
         if self.parallel_downloads:
             self._download_parallel()
@@ -355,18 +362,69 @@ class Downloader:
     def _assert_overwrite(self):
         for archivo_inei in self.archivos_a_descargar:
             file_path = archivo_inei.file_path
+            dir_path = file_path.parent
+            base_name = file_path.stem
 
-            if file_path.exists() and not self.overwrite:
+            original_exists = file_path.exists()
+            variants_exist = any(
+                p.suffix == self.ext and p.stem.startswith(base_name + "_")
+                for p in dir_path.iterdir()
+            )
+
+            # Si existe algo y overwrite=True → borrar original + variantes
+            if self.overwrite:
+                if original_exists or variants_exist:
+                    for p in dir_path.iterdir():
+                        if p.suffix == self.ext and (
+                            p.stem == base_name or p.stem.startswith(base_name + "_")
+                        ):
+                            p.unlink()
+                continue
+
+            # overwrite=False → marcar como existente si original o variante existe
+            if original_exists and not variants_exist:
                 logging.info(
                     f"Archivo '{file_path}' ya existe y overwrite=False. No se descargará de nuevo."
                 )
                 archivo_inei.status = "exists"
                 self.downloaded_files.add(file_path)
 
+            elif original_exists and variants_exist:
+                logging.info(
+                    f"Archivo '{file_path}' y variantes ya existen y overwrite=False. No se descargará de nuevo."
+                )
+                archivo_inei.status = "exists"
+                self.downloaded_files.add(file_path)
+                self.downloaded_files.add(
+                    next(
+                        p
+                        for p in dir_path.iterdir()
+                        if p.suffix == self.ext and p.stem.startswith(base_name + "_")
+                    )
+                )
+
+            elif not original_exists and variants_exist:
+                warnings.warn(
+                    f"Existe variante(s) de '{file_path}' y overwrite=False. No se descargará de nuevo."
+                )
+                archivo_inei.status = "exists"
+                self.downloaded_files.add(
+                    next(
+                        p
+                        for p in dir_path.iterdir()
+                        if p.suffix == self.ext and p.stem.startswith(base_name + "_")
+                    )
+                )
+
     def _download_parallel(self):
-        print(f"🚀 Iniciando descarga paralela")
-        print("-" * 60)
         completed = 0
+        if all(archivo_inei.status == "exists" for archivo_inei in self.archivos_a_descargar):
+            self._print_success_message(completed, full=False)
+            return None
+        else:
+            print(f"🚀 Iniciando descarga paralela")
+            print("-" * 60)
+            completed = 0
 
         with ThreadPoolExecutor(max_workers=5) as executor:
             # Enviar todas las tareas
@@ -389,9 +447,13 @@ class Downloader:
 
     def _download_sequential(self):
         # Descarga secuencial
-        print(f"🚀 Iniciando descarga secuencial")
-        print("-" * 60)
         completed = 0
+        if all(archivo_inei.status == "exists" for archivo_inei in self.archivos_a_descargar):
+            self._print_success_message(completed, full=False)
+            return None
+        else:
+            print(f"🚀 Iniciando descarga secuencial")
+            print("-" * 60)
 
         for archivo_inei in self.archivos_a_descargar:
             if archivo_inei.status == "exists":
@@ -401,7 +463,6 @@ class Downloader:
 
         self._print_success_message(completed)
 
-        return self.downloaded_files
 
     def _download_zip(self, archivo_inei: ArchivoINEI):
         """
@@ -481,20 +542,21 @@ class Downloader:
 
         return None
 
-    def _print_success_message(self, completed):
+    def _print_success_message(self, completed, full=True):
         if not self.downloaded_files:
             raise NoFilesExtractedError("No se extrajeron archivos, revisar errores.")
         else:
-            archivos_a_descargar = [
-                archivo
-                for archivo in self.archivos_a_descargar
-                if archivo.status != "exists"
-            ]
-            print("-" * 60)
-            print(
-                f"Descarga completada: {completed}/{len(archivos_a_descargar)} zips descargados"
-            )
             sample_file = next(iter(self.downloaded_files))
+            if full:
+                archivos_a_descargar = [
+                    archivo
+                    for archivo in self.archivos_a_descargar
+                    if archivo.status != "exists"
+                ]
+                print("-" * 60)
+                print(
+                    f"Descarga completada: {completed}/{len(archivos_a_descargar)} zips descargados"
+                )
             if sample_file.is_dir():
                 print(
                     f"🎉 Se obtuvieron {len(self.downloaded_files)} carpetas en total"
@@ -540,12 +602,14 @@ class Downloader:
                     file_path = archivo_inei.file_path / filename
 
                 if self.data_only:
-                    if not filename.lower().endswith(f"{self.ext_type}"):
+                    if not filename.lower().endswith(f"{self.ext}"):
                         continue
                     # Para no sobreescribir archivos (no sé por qué el INEI a veces divide una base de datos en varios archivos)
                     path_to_assert = archivo_inei.file_path
                     if path_to_assert.exists():
-                        file_path = file_path.with_name(f"{path_to_assert.stem}_{exist_index}_{path_to_assert.suffix}")
+                        file_path = file_path.with_name(
+                            f"{path_to_assert.stem}_{exist_index}{path_to_assert.suffix}"
+                        )
                         exist_index += 1
                     else:
                         file_path = file_path.with_name(path_to_assert.name)
