@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from ._trends_abc import TendenciasABC
     
 
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+# logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
 class Tendencias:
     """

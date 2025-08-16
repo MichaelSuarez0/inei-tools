@@ -7,12 +7,10 @@ from ._helper_functions import DATABASES_FOLDER, read, transpose
 import logging
 from functools import reduce
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(levelname)s] %(message)s'
-)
-
-
+# logging.basicConfig(
+#     level=logging.INFO,
+#     format='[%(levelname)s] %(message)s'
+# )
 
 class Pregunta(ABC):
     pass

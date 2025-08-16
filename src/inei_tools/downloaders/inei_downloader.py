@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal, Optional, Union
 import warnings
 import requests
 import zipfile
@@ -15,13 +15,8 @@ from ..encuestas import Encuesta, Endes
 from .exceptions import NoFilesExtractedError, FormatoNoDisponibleError
 from .db_manager import DBManager, Queries
 
-from icecream import ic
-
 # Para forzar conexiones IPv4
 requests.packages.urllib3.util.connection.HAS_IPV6 = False
-
-logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
-
 
 @dataclass
 class ArchivoINEI:
@@ -70,6 +65,12 @@ class Downloader:
     data_only : bool, optional
         Si True, conserva únicamente el archivo de datos con extensión especificada (ignora otros).
         Solo tiene efecto cuando `descomprimir=True`. Por defecto: False.
+    logger : bool | logging.Logger, optional
+        Controla el manejo de logs durante la ejecución:
+        - Si **False**, no se imprime nada (modo silencioso).
+        - Si **True**, se configura un logger básico con nivel INFO y salida a consola.
+        - Si se pasa una instancia de `logging.Logger`, se usará dicho logger personalizado.
+        Por defecto: True.
 
     Attributes
     ---------
@@ -150,6 +151,7 @@ class Downloader:
         parallel_downloads: bool = False,
         file_type: Literal["csv", "stata", "dta", "dbf", "spss", "stata"] = "csv",
         data_only: bool = False,
+        logger: Union[bool, logging.Logger] = True,
     ):
         self.modulos = modulos
         self.anios = anios if anios is not None else []
@@ -161,20 +163,15 @@ class Downloader:
         self.data_only = data_only
         self.encuesta = None
 
-        if file_type in ("dta", "stata"):
-            self.ext = "dta"
-            self.file_type = "stata"
-        elif file_type in ("spss", "sav"):
-            self.file_type = "spss"
-            self.ext = "sav"
+        # Configuración de logger según lo que pase el usuario
+        if isinstance(logger, logging.Logger):
+            self.logger = logger
+        elif logger is True:
+            logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
+            self.logger = logging.getLogger(self.__class__.__name__)
         else:
-            self.ext = file_type
-        self.ext = f".{self.ext}"
-        if data_only == True and descomprimir == False:
-            warnings.warn(
-                "Opción 'data_only' activada: la descompresión se habilitó automáticamente para extraer los archivos de datos."
-            )
-            self.descomprimir = True
+            self.logger = logging.getLogger(self.__class__.__name__)
+            self.logger.addHandler(logging.NullHandler())
 
         self._assert_types()
         self.archivos_a_descargar: list[ArchivoINEI] = []
@@ -182,6 +179,25 @@ class Downloader:
         self.db: DBManager = None
 
     def _assert_types(self) -> None:
+        # Conversión de file_type
+        if self.file_type in ("dta", "stata"):
+            self.ext = "dta"
+            self.file_type = "stata"
+        elif self.file_type in ("spss", "sav"):
+            self.file_type = "spss"
+            self.ext = "sav"
+        else:
+            self.ext = self.file_type
+        self.ext = f".{self.ext}"
+
+        # Assert data_only y self.descomprimir
+        if self.data_only == True and self.descomprimir == False:
+            warnings.warn(
+                "Opción 'data_only' activada: la descompresión se habilitó automáticamente para extraer los archivos de datos."
+            )
+            self.descomprimir = True
+
+
         # Años
         if self.anios:
             if isinstance(self.anios, Iterable):
@@ -422,8 +438,8 @@ class Downloader:
             self._print_success_message(completed, full=False)
             return None
         else:
-            print(f"🚀 Iniciando descarga paralela")
-            print("-" * 60)
+            self.logger.info(f"🚀 Iniciando descarga paralela")
+            self.logger.info("-" * 60)
             completed = 0
 
         with ThreadPoolExecutor(max_workers=5) as executor:
@@ -452,8 +468,8 @@ class Downloader:
             self._print_success_message(completed, full=False)
             return None
         else:
-            print(f"🚀 Iniciando descarga secuencial")
-            print("-" * 60)
+            self.logger.info(f"🚀 Iniciando descarga secuencial")
+            self.logger.info("-" * 60)
 
         for archivo_inei in self.archivos_a_descargar:
             if archivo_inei.status == "exists":
@@ -488,7 +504,7 @@ class Downloader:
             encuesta=archivo_inei.encuesta_name,
             modulo=archivo_inei.modulo,
             anio=archivo_inei.año,
-            ext="zip",
+            ext=".zip",
         )
         if archivo_inei.file_path.suffix:
             zip_path = archivo_inei.file_path.parent / zip_name
@@ -553,19 +569,20 @@ class Downloader:
                     for archivo in self.archivos_a_descargar
                     if archivo.status != "exists"
                 ]
-                print("-" * 60)
-                print(
+                self.logger.info("-" * 60)
+                self.logger.info(
                     f"Descarga completada: {completed}/{len(archivos_a_descargar)} zips descargados"
                 )
             if sample_file.is_dir():
-                print(
+                self.logger.info(
                     f"🎉 Se obtuvieron {len(self.downloaded_files)} carpetas en total"
                 )
             elif sample_file.is_file():
-                print(
+                self.logger.info(
                     f"🎉 Se obtuvieron {len(self.downloaded_files)} archivos en total"
                 )
-            print()
+            if not all(isinstance(h, logging.NullHandler) for h in self.logger.handlers):
+                print()
 
     def _decompress_and_flatten(self, archivo_inei: ArchivoINEI, zip_path: Path):
         """
