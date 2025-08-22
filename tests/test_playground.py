@@ -16,7 +16,7 @@ def test_download_zip():
     downloader = inei.Downloader(
         modulos=[inei.Enaho.M01_CARACTERISTICAS_VIVIENDA_HOGAR],
         anios=list(range(2020, 2024)),
-        output_dir=OUTPUT_DIR,
+        output_dir=".",
         descomprimir=False,
         overwrite=True,
         file_type="stata",
@@ -40,5 +40,17 @@ def test_download_zip_decompress():
     paths = downloader.download_all()
     assert_valid_paths(paths)
 
+def test_no_available_format():
+    downloader = inei.Downloader(
+        anios=list(range(2017, 2020)),
+        modulos=[inei.Endes.M1638_PESO_TALLA_ANEMIA],
+        output_dir=OUTPUT_DIR,
+        descomprimir=True,
+        overwrite=True,
+        parallel_downloads=True,
+        file_type="csv"
+    )
+    paths = downloader.download_all()
+
 if __name__ == "__main__":
-    test_download_zip()
+    test_no_available_format()

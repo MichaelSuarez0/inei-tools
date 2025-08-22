@@ -1,7 +1,6 @@
 import inei_tools as inei
 from pathlib import Path
 import shutil
-import inei_tools as inei
 import pytest
 
 
@@ -28,7 +27,7 @@ class TestEnahoDownloader:
     def test_download_zip(self):
         downloader = inei.Downloader(
             modulos=inei.Enaho.M01_CARACTERISTICAS_VIVIENDA_HOGAR,
-            anios=list(range(2020, 2024)),
+            anios=range(2020, 2024),
             output_dir=OUTPUT_DIR,
             descomprimir=False,
             overwrite=True,
