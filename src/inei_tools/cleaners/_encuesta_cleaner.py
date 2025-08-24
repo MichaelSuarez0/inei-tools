@@ -1,7 +1,6 @@
 # Nota: solo funciona para preguntas en las que se evalúa la confianza
 # TODO: Agregar factor de expansión
 # TODO: Reducir los métodos, confunde el haber varios
-from abc import ABC, abstractmethod
 import logging
 from pathlib import Path
 from typing import Literal, Self
@@ -14,21 +13,20 @@ from ..configs.encuesta_config import EnahoConfig, EnapresConfig, EndesConfig
 
 # TODO: Forma más reliable de obtener el año
 # TODO: Add departamento debería tener como args with_lima_metro
-class EncuestaCleaner(ABC):
+class EncuestaCleaner:
     def __init__(self, encuesta: Literal["enaho", "enapres", "endes"]):
         self.data_source = None
         self.df: pd.DataFrame = None
         self.df_original = None
         self.target_variable_id = None
         self.year: int = None
-        self.factor_col: str = None
 
         if encuesta == "enaho":
             self.config = EnahoConfig()
         elif encuesta =="enapres":
             self.config = EnapresConfig()
         elif encuesta == "endes":
-            self.config == EndesConfig()
+            self.config = EndesConfig()
         
         self.encuesta = encuesta
 
