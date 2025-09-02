@@ -20,11 +20,13 @@ def clean_output_dir(request):
 
 class TestEnahoDownloader:
     def assert_valid_paths(self, paths: list[Path]):
+        """Helper: valida que se descargaron archivos y que las rutas existen."""
         assert len(paths) > 0, "No se descargó ningún archivo"
         for path in paths:
             assert path.exists(), f"Ruta no existe: {path}"
 
     def test_download_zip(self):
+        """Descarga básica de módulos de ENAHO (stata) sin descomprimir"""
         downloader = inei.Downloader(
             modulos=inei.Enaho.M01_CARACTERISTICAS_VIVIENDA_HOGAR,
             anios=range(2020, 2024),
@@ -39,6 +41,7 @@ class TestEnahoDownloader:
         self.assert_valid_paths(paths)
 
     def test_download_zip_decompress(self):
+        """Descarga básica de módulos de ENAHO (csv) y los descomprime"""
         downloader = inei.Downloader(
             modulos=inei.Enaho.M85_GOBERNABILIDAD_DEMOCRACIA_TRANSPARENCIA,
             anios=[2022, 2023],
@@ -53,6 +56,7 @@ class TestEnahoDownloader:
         self.assert_valid_paths(paths)
 
     def test_download_data_only(self):
+        """Descarga solo la data (se borran otros archivos) y descomprime en CSV."""
         downloader = inei.Downloader(
             modulos=inei.Enaho.M85_GOBERNABILIDAD_DEMOCRACIA_TRANSPARENCIA,
             anios=[2022, 2023],
@@ -67,6 +71,10 @@ class TestEnahoDownloader:
         self.assert_valid_paths(paths)
 
     def test_download_no_overwrite(self):
+        """
+        Verifica que si se descargan archivos con overwrite=False
+        no se sobrescriben y se mantienen las mismas rutas.
+        """
         downloader1 = inei.Downloader(
             modulos=inei.Enaho.M85_GOBERNABILIDAD_DEMOCRACIA_TRANSPARENCIA,
             anios=[2022],

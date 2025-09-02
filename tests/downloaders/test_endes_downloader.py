@@ -21,35 +21,55 @@ def clean_output_dir(request):
 
 class TestEndesDownloader:
     def assert_valid_paths(self, paths: list[Path]):
+        """Helper para validar que los archivos se descargaron correctamente."""
         assert len(paths) > 0, "No se descargó ningún archivo"
         for path in paths:
             assert path.exists(), f"Ruta no existe: {path}"
 
-    def test_download_zip(self):
+    @pytest.mark.parametrize(
+        "anios, modulos, file_type",
+        [
+            (list(range(2020, 2022)), 
+             [inei.Endes.M1638_PESO_TALLA_ANEMIA, inei.Endes.M1634_INMUNIZACION_SALUD], 
+             "CSV"),
+            (2020, [1638, 1634], "CSV"),
+            (range(2015, 2020), 65, "spss"),
+        ]
+    )
+    def test_download_valid_cases(self, anios, modulos, file_type):
+        """Prueba descargas de ENDES con distintos años, módulos y formatos válidos."""
         downloader = inei.Downloader(
-            anios=list(range(2020, 2024)),
-            modulos=[inei.Endes.M1638_PESO_TALLA_ANEMIA, inei.Endes.M1634_INMUNIZACION_SALUD],
+            anios=anios,
+            modulos=modulos,
             output_dir=OUTPUT_DIR,
             descomprimir=False,
             overwrite=False,
-            parallel_downloads=False,
-            file_type="csv"
+            parallel_downloads=True,
+            file_type=file_type,
         )
         paths = downloader.download_all()
         self.assert_valid_paths(paths)
-    
-    def test_download_zip_hardcoded(self):
+
+    @pytest.mark.parametrize(
+        "anios, modulos, file_type",
+        [
+            (list(range(2018, 2020)), [inei.Endes.M1638_PESO_TALLA_ANEMIA], "csv"),
+            (2020, [1638, 1634], "stata"),
+        ]
+    )
+    def test_download_invalid_format(self, anios, modulos, file_type):
+        """Verifica que se lance FormatoNoDisponibleError para formatos no soportados."""
         downloader = inei.Downloader(
-            anios=list(range(2023, 2024)),
-            modulos=[1638, 1634],
+            anios=anios,
+            modulos=modulos,
             output_dir=OUTPUT_DIR,
             descomprimir=False,
             overwrite=False,
-            parallel_downloads=False,
-            file_type="csv"
+            parallel_downloads=True,
+            file_type=file_type,
         )
-        paths = downloader.download_all()
-        self.assert_valid_paths(paths)
+        with pytest.raises(FormatoNoDisponibleError, match=".*formato no disponible.*"):
+            downloader.download_all()
 
 
     # def test_download_zip_decompress(self):
@@ -126,8 +146,15 @@ class TestEndesDownloader:
 
 if __name__ == "__main__":
     import pytest
-    #pytest.main([__file__, "-v"])
-    pytest.main([__file__, "-v", "-k", "test_no_available_format"])
+    #pytest.main([__file__, "-v"]) # Correr normalmente
+    #pytest.main([__file__, "-v", "-k", "test_no_available_format"]) # Escoger algunos tests
+    pytest.main([
+        __file__,
+        "-v",
+        "-s",  # para prints
+        "-o", "log_cli=true",
+        "--log-cli-level=INFO"
+    ])
 
 # def test_enapres_downloader():
 #     ed = inei.Downloader(
