@@ -26,6 +26,10 @@ class TestEnapresDownloader:
             assert path.exists(), f"Ruta no existe: {path}"
 
     def test_download_sin_años(self):
+        """
+        Enapres tiene esta particularidad de que sus 'códigos módulos' son únicos para cada año,
+        por lo que se puede descargar una encuesta sin especificar el año.
+        """
         downloader = inei.Downloader(
             modulos=1815,
             anios=None,

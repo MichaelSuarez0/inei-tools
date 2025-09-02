@@ -28,6 +28,6 @@ if __name__ == "__main__":
     test = Path(__file__).parent
     paths = [path for path in list(test.iterdir()) if path.is_file() and path.suffix == ".csv"][:3]
     et = inei.Tendencias(paths, target_variable_id = "P1171$09", question_type="dummy")
-    et.get_national_trends()
+    et.tendencias_nacionales()
     #test_init_years_modulos()
     # performance: pyinstrument -o profile.html pandas_playground/dummies.py
