@@ -159,7 +159,7 @@ class Downloader:
         self.output_dir = Path(output_dir)
         self.overwrite = overwrite
         self.parallel_downloads = parallel_downloads
-        self.file_type = file_type
+        self.file_type = file_type.lower()
         self.data_only = data_only
         self.encuesta = None
 
@@ -367,9 +367,9 @@ class Downloader:
         else:
             self._download_sequential()
 
-        self.downloaded_files = list(self.downloaded_files)
-        self.downloaded_files.sort(reverse=False)
-        return self.downloaded_files
+        downloaded_files = list(self.downloaded_files)
+        downloaded_files.sort(reverse=False)
+        return downloaded_files
 
     # @staticmethod
     # def _sort_paths(self, paths: list[Path])-> list[Path]:

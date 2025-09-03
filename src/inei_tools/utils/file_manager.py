@@ -10,7 +10,7 @@ class FileManager:
     #     if not isinstance(self.search_directory, (str, Path)):
     #         raise TypeError("Solo se permiten str o Path")
 
-     def keep(
+    def keep(
         self,
         search_directory: str | Path,
         file_names: Iterable[str],
