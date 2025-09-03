@@ -146,11 +146,11 @@ class Downloader:
         modulos: int | str | Encuesta | list[str | Encuesta],
         anios: int | str | list[str] | None = None,
         output_dir: str = ".",
-        overwrite: bool = False,
-        descomprimir: bool = False,
-        parallel_downloads: bool = False,
         file_type: Literal["csv", "stata", "dta", "dbf", "spss", "stata"] = "csv",
+        descomprimir: bool = False,
         data_only: bool = False,
+        overwrite: bool = False,
+        parallel_downloads: bool = False,
         logger: Union[bool, logging.Logger] = True,
     ):
         self.modulos = modulos

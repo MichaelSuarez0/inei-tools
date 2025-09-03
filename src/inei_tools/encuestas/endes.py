@@ -4,6 +4,7 @@ from enum import Enum
 # TODO: Falta hasta el 2004
 # TODO: Desde el 2020 recién tienen csv Y CAMBIARON LOS CÓDIGOS DE MÓDULO
 class Endes(Enum):
+    """Acceder a módulos de Endes de forma pythonica (con autocompletado)"""
     M1629_CARACTERISTICAS_HOGAR = "1629"
     M1630_CARACTERISTICAS_VIVIENDA = "1630"
     M1631_DATOS_BASICOS_MEF = "1631"

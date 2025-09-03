@@ -2,6 +2,7 @@ from enum import Enum
 
 
 class Enapres(Enum):
+    """Acceder a módulos de Enapres de forma pythonica (con autocompletado)"""
     M100_CARACTERISTICAS_VIVIENDA_Y_HOGAR = "100"
     M200_CARACTERISTICAS_RESIDENTES_HOGAR = "200"
     M300_DISCAPACIDAD_PROGRAMAS_SOCIALES_EDUCACION_ETNIA_GENERO = "300"

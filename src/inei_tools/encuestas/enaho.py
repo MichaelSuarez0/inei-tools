@@ -1,6 +1,7 @@
 from enum import Enum
 
 class Enaho(Enum):
+    """Acceder a módulos de Enaho de forma pythonica (con autocompletado)"""
     M01_CARACTERISTICAS_VIVIENDA_HOGAR = "01"
     M02_CARACTERISTICAS_MIEMBROS_HOGAR = "02"
     M03_EDUCACION = "03"
