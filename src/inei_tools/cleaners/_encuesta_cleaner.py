@@ -6,34 +6,36 @@ from pathlib import Path
 from typing import Literal, Self
 import numpy as np
 import ubigeos_peru as ubg
+import polars as pl
 import pandas as pd
 from icecream import ic
 from ..utils import detect_delimiter, detect_encoding
 from ..configs.encuesta_config import EnahoConfig, EnapresConfig, EndesConfig
+
 
 # TODO: Forma más reliable de obtener el año
 # TODO: Add departamento debería tener como args with_lima_metro
 class EncuestaCleaner:
     def __init__(self, encuesta: Literal["enaho", "enapres", "endes"]):
         self.data_source = None
-        self.df: pd.DataFrame = None
+        self.df: pl.DataFrame = None
         self.df_original = None
         self.target_variable_id = None
         self.year: int = None
 
         if encuesta == "enaho":
             self.config = EnahoConfig()
-        elif encuesta =="enapres":
+        elif encuesta == "enapres":
             self.config = EnapresConfig()
         elif encuesta == "endes":
             self.config = EndesConfig()
-        
+
         self.encuesta = encuesta
 
     def initialize(self, data_source: str | Path | pd.DataFrame) -> Self:
         if isinstance(data_source, pd.DataFrame):
-            self.df = data_source
-            self.df_original = self.df.copy()
+            self.df = pl.DataFrame(data_source)
+            self.df_original = self.df
 
         else:
             if isinstance(data_source, str):
@@ -41,7 +43,7 @@ class EncuestaCleaner:
 
             if isinstance(data_source, Path):
                 self.df = self._load_into_memory(data_source)
-                self.df_original = self.df.copy()
+                self.df_original = self.df
 
             else:
                 raise TypeError(
@@ -52,46 +54,48 @@ class EncuestaCleaner:
         self._detect_year()
         return self
 
+    # AQUÍ ME QUEDÉ
+
     def _detect_year(self):
-        self.year = int(self.df.loc[0, self.config.year_column])
+        self.year = self.df.select(pl.col(self.config.year_column)).to_series()[0]
 
     def _load_into_memory(self, path: Path):
         logging.info(f"📖 Reading {path}")
         if path.suffix == ".dta":
-            df = pd.read_stata(path)
+            pass
+            # df = pl.read_stata(path)
         elif path.suffix == ".csv":
             delim = detect_delimiter(path)
             encoding = detect_encoding(path)
             print(f"Encoding detectado: {encoding}")
-            df = pd.read_csv(path, encoding=encoding, sep=delim, low_memory=False)
+            df = pl.read_csv(path, encoding=encoding, separator=delim, low_memory=False)
         logging.info(f"📖 Finished reading {path}")
 
         return df
 
     def add_departamentos(self) -> Self:
         if not self.encuesta == "enapres":
-            self.df.loc[:, "Departamento"] = (
-                self.df[self.config.ubigeo_column]
-                .astype(str)
-                .apply(
-                    lambda x: ubg.get_departamento(
-                        x, with_lima_metro=True, with_lima_region=True
-                    )
+            self.df = self.df.with_columns(
+                ubg.get_departamento(pl.col(self.config.ubigeo_column)).alias(
+                    "Departamento"
                 )
             )
         else:
-            self.df.loc[:, "Departamento"] = (
-                self.df["NOMBREDD"].astype(str).apply(ubg.validate_departamento)
+            self.df.with_columns(
+                ubg.validate_departamento(pl.col("NOMBREDD")).alias("Departamento")
             )
-            return self
+        return self
 
     def add_provincia(self) -> Self:
         if not self.encuesta == "enapres":
-            self.df.loc[:, "Provincia"] = self.df[self.config.ubigeo_column].astype(str).apply(ubg.get_provincia)
+            self.df = self.df.with_columns(
+                ubg.get_provincia(pl.col(self.config.ubigeo_column)).alias("Provincia")
+            )
         else:
-            self.df.loc[:, "Provincia"] = (
-            self.df["NOMBREPP"].astype(str).apply(lambda x: ubg.validate_ubicacion(x, on_error='capitalize'))
-        )
+            self.df.with_columns(
+                ubg.validate_ubicacion(pl.col("NOMBREPP")).alias("Provincia")
+            )
+
         return self
 
     def remove_nas(self) -> Self:
@@ -123,9 +127,13 @@ class EncuestaCleaner:
 
     def add_factor(self) -> Self:
         self.df[self.config.factor_column] = (
-            self.df[self.config.factor_column].astype(str).str.replace(",", ".", regex=False)
+            self.df[self.config.factor_column]
+            .astype(str)
+            .str.replace(",", ".", regex=False)
         )
-        self.df[self.config.factor_column] = pd.to_numeric(self.df[self.config.factor_column]).copy()
+        self.df[self.config.factor_column] = pd.to_numeric(
+            self.df[self.config.factor_column]
+        ).copy()
         self.df = (
             self.df.groupby(self.target_variable_id)[self.config.factor_column]
             .sum()
@@ -163,7 +171,11 @@ class EncuestaCleaner:
         return self
 
     def to_row_percentage(self) -> Self:
-        cat_cols = [c for c in self.df.columns if c not in ["Departamento", self.config.year_column]]
+        cat_cols = [
+            c
+            for c in self.df.columns
+            if c not in ["Departamento", self.config.year_column]
+        ]
         self.df[cat_cols] = self.df[cat_cols].apply(pd.to_numeric, errors="coerce")
         row_totals = self.df[cat_cols].sum(axis=1)
         # Lo siguiente es como self.df[cat_cols] = self.df[cat_cols] / row_totals * 100 PERO PARA CADA FILA
@@ -173,7 +185,12 @@ class EncuestaCleaner:
     def filter_by_variable(self) -> Self:
         # self.df = self.df.loc[:, [self.variable_id, "DPTO", "FACTOR"]]
         self.df = self.df[
-            [self.config.year_column, self.target_variable_id, "DEPARTAMENTO", self.factor_col]
+            [
+                self.config.year_column,
+                self.target_variable_id,
+                "DEPARTAMENTO",
+                self.factor_col,
+            ]
         ].copy()
         return self
 
@@ -190,7 +207,9 @@ class EncuestaCleaner:
             )
         else:
             self.df = (
-                self.df.groupby(by=["Departamento", self.target_variable_id])[self.factor_col]
+                self.df.groupby(by=["Departamento", self.target_variable_id])[
+                    self.factor_col
+                ]
                 .sum()
                 .unstack()
                 .reset_index()
@@ -198,7 +217,9 @@ class EncuestaCleaner:
 
         if with_year:
             self.df["Año"] = self.year
-            self.df.insert(1, "Año", self.df.pop("Año"))  # Mover "AÑO" a la segunda posición
+            self.df.insert(
+                1, "Año", self.df.pop("Año")
+            )  # Mover "AÑO" a la segunda posición
         # self.df.index.name = "DPTO"
         return self
 
@@ -218,6 +239,7 @@ class EncuestaCleaner:
     def get_df(self) -> pd.DataFrame:
         return self.df
 
+
 # TODO: Probar lo de detect year si no funciona
 # class EnahoCleaner(EncuestaCleaner):
 #     def __init__(self):
@@ -236,4 +258,3 @@ class EncuestaCleaner:
 
 #     def wide_format(self) -> Self:
 #         self.df[""]
-

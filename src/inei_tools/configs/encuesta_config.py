@@ -7,7 +7,6 @@ from typing import Any
 @dataclass
 class EncuestaConfig(ABC):
     """Configuración base para todas las encuestas"""
-    target_variable: str
     #modules: List[Union[Enaho, Enapres, Endes]] = field(default_factory=list)
     
     # Columnas estándar (se pueden override por encuesta)
@@ -25,6 +24,7 @@ class EnahoConfig(EncuestaConfig):
 class EnapresConfig(EncuestaConfig):
     year_column = "ANIO"
     ubigeo_column = "NOMBREDD"
+    factor_column = "P130ZA" # Este es el factor de expansión anual para enapres_100 según alvaro, revisar
 
 class EndesConfig(EncuestaConfig):
     year_column = "ID1"
